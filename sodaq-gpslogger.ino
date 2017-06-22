@@ -95,7 +95,6 @@ bool check_sdcard (uint8_t chipSelect) {
 
   //SerialUSB.println("\tFiles found on the card (name, date and size in bytes): ");
   //root.openRoot(volume);
-
   // list all files in the card with date and size
   //root.ls(LS_R | LS_DATE | LS_SIZE);
 
@@ -127,12 +126,8 @@ void flash_led(uint8_t pin) {
 }
 
 String make_logfile_path() {
-  return "datalog.csv";
-
-  // FIXME: can't open file with this name? maybe bc of String type..
-  return String("datalog_")
-    + sodaq_gps.getDateTimeString()
-    + ".csv";
+  // filenames longer than 12 chars cannot be written..??
+  return sodaq_gps.getDateTimeString().substring(0, 8) + ".csv";
 }
 
 void write_gps_to_stream(Print &stream) {
