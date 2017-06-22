@@ -1,0 +1,1 @@
+# sodaqone-gpslogger
