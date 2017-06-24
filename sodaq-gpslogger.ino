@@ -11,7 +11,7 @@
   * SD card attached to SPI bus as follows:
  ** MOSI / DI - pin D10 
  ** MISO / DO - pin D8
- ** CLK - pin D7
+ ** CLK - pin D7 (D11 if not on ONEBase)
  ** CS - pin D9
 
  */
@@ -25,6 +25,17 @@
 // change to Serial to disable log output. when set to SerialUSB, log output is given, but device only works when connected via USB
 #define DEBUG_OUT Serial
 
+/**
+ * rollover safe implementation, with an optional offset
+ */
+void adaptive_delay(uint32_t duration, uint32_t offset = 0) {
+  unsigned long start = millis();
+  for (;;) {
+    unsigned long now = millis();
+    unsigned long elapsed = now - start + offset;
+    if (elapsed >= duration) return;
+  }
+}
 
 /**
  * copied from SD example sketch
@@ -117,12 +128,9 @@ bool find_gps_fix(uint32_t timeout = 60000) {
 }
 
 void flash_led(uint8_t pin) {
-  for (size_t i = 0; i < 2; ++i) {
-    delay(50);
-    digitalWrite(pin, LOW);
-    delay(50);
-    digitalWrite(pin, HIGH);
-  }
+  digitalWrite(pin, LOW);
+  delay(100);
+  digitalWrite(pin, HIGH);
 }
 
 String make_logfile_path() {
@@ -147,6 +155,7 @@ void write_gps_to_stream(Print &stream) {
 
 File logfile;
 String logfile_path;
+uint32_t cyclestart = 0;
 
 void setup() {
   // init RGB led, also as startup feedback    
@@ -199,12 +208,16 @@ void setup() {
 }
 
 void loop(void) {
-  digitalWrite(LED_RED, HIGH);
+  cyclestart = millis();
+
+  // TODO: only update fix, if accelerometer indicates movement?
+  // TODO: check battery voltage & blink LED if low?
+  digitalWrite(LED_RED, LOW);
   if (!find_gps_fix()) {
     DEBUG_OUT.print("couldnt get fix");
-    digitalWrite(LED_RED, LOW);
     return;
   }
+  digitalWrite(LED_RED, HIGH);
 
   write_gps_to_stream(DEBUG_OUT);
   DEBUG_OUT.println();
@@ -232,5 +245,5 @@ void loop(void) {
 
   // TODO: adaptive & rollover safe delay, to ensure longrunning & fixed interval
   // https://github.com/noerw/mobile-sensebox/blob/master/mobile-sensebox.ino#L151-L155
-  delay(2000);
+  adaptive_delay(10000, millis() - cyclestart);
 }
