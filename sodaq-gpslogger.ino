@@ -20,10 +20,20 @@
 #include <SD.h>
 #include "lib/Sodaq_UBlox_GPS.h"
 
+// Water temperature libraries
+#include <OneWire.h>
+#include <DallasTemperature.h>
+
 #define SD_CHIPSELECT 9u
+
+#define ONE_WIRE_BUS 2
 
 // change to Serial to disable log output. when set to SerialUSB, log output is given, but device only works when connected via USB
 #define DEBUG_OUT Serial
+
+// declare water temperarure sensor
+OneWire oneWire(ONE_WIRE_BUS);
+DallasTemperature sensors(&oneWire);
 
 /**
  * rollover safe implementation, with an optional offset
@@ -138,7 +148,8 @@ String make_logfile_path() {
   return sodaq_gps.getDateTimeString().substring(0, 8) + ".csv";
 }
 
-void write_gps_to_stream(Print &stream) {
+void write_log_to_stream(Print &stream) {
+  // GPS
   stream.print(sodaq_gps.getDateTimeString());
   stream.print(',');
   stream.print(String(sodaq_gps.getLat(), 6));
@@ -150,6 +161,11 @@ void write_gps_to_stream(Print &stream) {
   stream.print(String(sodaq_gps.getHDOP(), 3));
   stream.print(',');
   stream.print(String(sodaq_gps.getNumberOfSatellites()));
+  stream.print(',');
+
+  // temperature
+  sensors.requestTemperatures();
+  stream.print(String(sensors.getTempCByIndex(0)));
   stream.print(',');
 }
 
@@ -184,6 +200,9 @@ void setup() {
     while (true) ;
   }
 
+  // initialize water temperature sensor
+  sensors.begin();
+
   sodaq_gps.init(GPS_ENABLE);
   //sodaq_gps.setDiag(DEBUG_OUT);
 
@@ -198,7 +217,7 @@ void setup() {
 
   logfile = SD.open(logfile_path, FILE_WRITE);
   if (logfile) {
-    logfile.println("timestamp,latitude,longitude,altitude,HDOP,satellitecount");
+    logfile.println("timestamp,latitude,longitude,altitude,HDOP,satellitecount,temperature");
     logfile.close();
   } else {
     DEBUG_OUT.print("unable to write CSV header to logfile");
@@ -219,7 +238,7 @@ void loop(void) {
   }
   digitalWrite(LED_RED, HIGH);
 
-  write_gps_to_stream(DEBUG_OUT);
+  write_log_to_stream(DEBUG_OUT);
   DEBUG_OUT.println();
 
   // if the file opened okay write GPS fix to it
@@ -230,7 +249,7 @@ void loop(void) {
     DEBUG_OUT.print(logfile_path);
     DEBUG_OUT.print(" ... ");
 
-    write_gps_to_stream(logfile);
+    write_log_to_stream(logfile);
     // TODO: write sensor data
     logfile.println();
     
