@@ -16,7 +16,7 @@
 
   MIT License
 
-  Copyright (c) 2017 Norwin Roosen
+  Copyright (c) 2017 Norwin Roosen, Felix Erdmann
 
   Permission is hereby granted, free of charge, to any person obtaining a copy
   of this software and associated documentation files (the "Software"), to deal
@@ -50,6 +50,9 @@
 
 // change to Serial to disable log output. when set to SerialUSB, log output is given, but device only works when connected via USB
 #define DEBUG_OUT Serial
+
+#define MEASURE_INTERVAL 5000
+#define GPSIDLE_INTERVAL 20000
 
 // declare water temperarure sensor
 OneWire oneWire(ONE_WIRE_BUS);
@@ -220,6 +223,9 @@ void write_log_to_stream(Print &stream) {
 File logfile;
 String logfile_path;
 uint32_t cyclestart = 0;
+double lastLat = 0;
+double lastLng = 0;
+long gpsupdate_scheduled = 0;
 
 void setup() {
   // init RGB led, also as startup feedback
@@ -279,13 +285,6 @@ void setup() {
   }
 }
 
-#define MEASURE_INTERVAL 5000
-#define GPSIDLE_INTERVAL 20000
-
-double lastLat = 0;
-double lastLng = 0;
-long gpsupdate_scheduled = 0;
-
 void loop(void) {
   cyclestart = millis();
 
@@ -303,7 +302,7 @@ void loop(void) {
       gpsupdate_scheduled = cyclestart + MEASURE_INTERVAL;
     } else {
       gpsupdate_scheduled = cyclestart + GPSIDLE_INTERVAL;
-      digitalWrite(GPS_ENABLE, GPS_ENABLE_OFF); // save energy for longer interval
+      digitalWrite(GPS_ENABLE, LOW); // save energy for longer interval
     }
 
     lastLat = sodaq_gps.getLat();
