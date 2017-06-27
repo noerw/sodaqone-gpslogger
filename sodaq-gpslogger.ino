@@ -1,31 +1,51 @@
 /*
- * 
+ *
  * GPS SD logger based on SODAQ One with ONEBase + Adafruit SD breakout
- * 
+ *
  * red  LED on: no GPS fix
  * blue LED on: SD card error
  * green LED flash: write to logfile
- * 
+ *
 
  The circuit:
   * SD card attached to SPI bus as follows:
- ** MOSI / DI - pin D10 
+ ** MOSI / DI - pin D10
  ** MISO / DO - pin D8
  ** CLK - pin D7 (D11 if not on ONEBase)
  ** CS - pin D9
 
+  MIT License
+
+  Copyright (c) 2017 Norwin Roosen
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
  */
 
 #include <SPI.h>
 #include <SD.h>
-#include "lib/Sodaq_UBlox_GPS.h"
 
+#include "Sodaq_UBlox_GPS.h"
 // Water temperature libraries
-#include <OneWire.h>
-#include <DallasTemperature.h>
+#include "OneWire.h"
+#include "DallasTemperature.h"
 
-#define SD_CHIPSELECT 9u
-
+#define SD_CHIPSELECT 9
 #define ONE_WIRE_BUS 2
 
 // change to Serial to disable log output. when set to SerialUSB, log output is given, but device only works when connected via USB
@@ -122,12 +142,39 @@ bool check_sdcard (uint8_t chipSelect) {
   return true;
 }
 
+/**
+ * copied from TinyGPS++.cpp (https://github.com/mikalhart/TinyGPSPlus)
+ * Copyright (C) 2008-2013 Mikal Hart All rights reserved. License: GPL
+ */
+double distanceBetween(double lat1, double long1, double lat2, double long2) {
+  // returns distance in meters between two positions, both specified
+  // as signed decimal-degrees latitude and longitude. Uses great-circle
+  // distance computation for hypothetical sphere of radius 6372795 meters.
+  // Because Earth is no exact sphere, rounding errors may be up to 0.5%.
+  // Courtesy of Maarten Lamers
+  double delta = radians(long1-long2);
+  double sdlong = sin(delta);
+  double cdlong = cos(delta);
+  lat1 = radians(lat1);
+  lat2 = radians(lat2);
+  double slat1 = sin(lat1);
+  double clat1 = cos(lat1);
+  double slat2 = sin(lat2);
+  double clat2 = cos(lat2);
+  delta = (clat1 * slat2) - (slat1 * clat2 * cdlong);
+  delta = sq(delta);
+  delta += sq(clat2 * sdlong);
+  delta = sqrt(delta);
+  double denom = (slat1 * slat2) + (clat1 * clat2 * cdlong);
+  delta = atan2(delta, denom);
+  return delta * 6372795;
+}
 
 bool find_gps_fix(uint32_t timeout = 60000) {
   uint32_t start = millis();
-  
+
   DEBUG_OUT.println(String("waiting for fix... timeout: ") + timeout + String("ms"));
-  
+
   if (sodaq_gps.scan(true, timeout)) { // keep GPS enabled afterwards
     DEBUG_OUT.println(String("time to find fix: ") + (millis() - start) + String("ms"));
     return true;
@@ -167,6 +214,7 @@ void write_log_to_stream(Print &stream) {
   sensors.requestTemperatures();
   stream.print(String(sensors.getTempCByIndex(0)));
   stream.print(',');
+  stream.println();
 }
 
 File logfile;
@@ -174,7 +222,7 @@ String logfile_path;
 uint32_t cyclestart = 0;
 
 void setup() {
-  // init RGB led, also as startup feedback    
+  // init RGB led, also as startup feedback
   digitalWrite(LED_RED, HIGH);
   pinMode(LED_RED, OUTPUT);
   digitalWrite(LED_GREEN, HIGH);
@@ -208,6 +256,8 @@ void setup() {
 
   digitalWrite(LED_RED, LOW);
   while (!find_gps_fix(10000)) ; // get first fix & keep GPS enabled afterwards
+  lastLat = sodaq_gps.getLat();
+  lastLng = sodaq_gps.getLon();
   digitalWrite(LED_RED, HIGH);
 
   logfile_path = make_logfile_path();
@@ -215,31 +265,54 @@ void setup() {
   DEBUG_OUT.print("got fix. ready to write data to ");
   DEBUG_OUT.println(logfile_path);
 
-  logfile = SD.open(logfile_path, FILE_WRITE);
-  if (logfile) {
-    logfile.println("timestamp,latitude,longitude,altitude,HDOP,satellitecount,temperature");
-    logfile.close();
-  } else {
-    DEBUG_OUT.print("unable to write CSV header to logfile");
-    digitalWrite(LED_BLUE, LOW);
-    while (true) ;
+  // if the logfile does not exist yet, write the csv header
+  if (!SD.exists(logfile_path)) {
+    logfile = SD.open(logfile_path, FILE_WRITE);
+    if (logfile) {
+      logfile.println("timestamp,latitude,longitude,altitude,HDOP,satellitecount,temperature");
+      logfile.close();
+    } else {
+      DEBUG_OUT.print("unable to write CSV header to logfile");
+      digitalWrite(LED_BLUE, LOW);
+      while (true) ;
+    }
   }
 }
+
+#define MEASURE_INTERVAL 5000
+#define GPSIDLE_INTERVAL 20000
+
+double lastLat = 0;
+double lastLng = 0;
+long gpsupdate_scheduled = 0;
 
 void loop(void) {
   cyclestart = millis();
 
   // TODO: only update fix, if accelerometer indicates movement?
   // TODO: check battery voltage & blink LED if low?
-  digitalWrite(LED_RED, LOW);
-  if (!find_gps_fix()) {
-    DEBUG_OUT.print("couldnt get fix");
-    return;
+  if (millis() >= gpsupdate_scheduled) {
+    digitalWrite(LED_RED, LOW);
+    if (!find_gps_fix()) {
+      DEBUG_OUT.print("couldnt get fix");
+      return;
+    }
+
+    // determine, how far we moved. if less than 20m, reduce update interval
+    if (distanceBetween(lastLat, lastLng, sodaq_gps.getLat(), sodaq_gps.getLon()) > 20) {
+      gpsupdate_scheduled = cyclestart + MEASURE_INTERVAL;
+    } else {
+      gpsupdate_scheduled = cyclestart + GPSIDLE_INTERVAL;
+      digitalWrite(GPS_ENABLE, GPS_ENABLE_OFF); // save energy for longer interval
+    }
+
+    lastLat = sodaq_gps.getLat();
+    lastLng = sodaq_gps.getLon();
+    digitalWrite(LED_RED, HIGH);
   }
-  digitalWrite(LED_RED, HIGH);
+
 
   write_log_to_stream(DEBUG_OUT);
-  DEBUG_OUT.println();
 
   // if the file opened okay write GPS fix to it
   logfile = SD.open(logfile_path, FILE_WRITE);
@@ -250,9 +323,7 @@ void loop(void) {
     DEBUG_OUT.print(" ... ");
 
     write_log_to_stream(logfile);
-    // TODO: write sensor data
-    logfile.println();
-    
+
     logfile.close();
     flash_led(LED_GREEN);
     DEBUG_OUT.println("done.");
@@ -262,7 +333,6 @@ void loop(void) {
     DEBUG_OUT.println("error opening logfile");
   }
 
-  // TODO: adaptive & rollover safe delay, to ensure longrunning & fixed interval
-  // https://github.com/noerw/mobile-sensebox/blob/master/mobile-sensebox.ino#L151-L155
-  adaptive_delay(10000, millis() - cyclestart);
+  // adaptive & rollover safe delay, to ensure longrunning & fixed interval
+  adaptive_delay(MEASURE_INTERVAL, millis() - cyclestart);
 }
