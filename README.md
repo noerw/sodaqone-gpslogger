@@ -1,1 +1,38 @@
 # sodaqone-gpslogger
+
+Firmware for a (solar powered) GPS logger with temperature sensor.
+
+[photo]()
+
+## hardware
+
+- SODAQOne
+- SODAQOne ONEBase (not required, but has different pinout)
+- Adafruit MicroSD Card Breakout
+- Dallas Temperature Sensor
+- Solar Panel + LiPo (not required)
+
+## compile & upload firmware
+Clone this repo:
+```bash
+git clone https://github.com/noerw/sodaqone-gpslogger && cd sodaqone-gpslogger
+```
+
+Assuming you have Arduino IDE installed, add the following additional board definitions URL to your Arduino config (eg. `~/.arduino15/preferences.txt`, the field `boardsmanager.additional.urls`):
+```
+http://downloads.sodaq.net/package_sodaq_samd_index.json
+```
+
+Then install the board definition for SODAQ once:
+```bash
+arduino --install-boards "SODAQ:samd"
+```
+
+To compile & upload the firmware:
+```bash
+export SODAQ_PORT=/dev/ttyACM0 # replace with the SerialUSB device of the board
+arduino --upload --board SODAQ:samd:sodaq_one_base --port $SODAQ_PORT sodaq-gpslogger.ino
+```
+
+## license
+MIT, see the respective files.
