@@ -41,6 +41,7 @@
 #include <SD.h>
 
 #include "Sodaq_UBlox_GPS.h"
+#include "RTCZero.h"
 // Water temperature libraries
 #include "OneWire.h"
 #include "DallasTemperature.h"
@@ -51,12 +52,22 @@
 // change to Serial to disable log output. when set to SerialUSB, log output is given, but device only works when connected via USB
 #define DEBUG_OUT Serial
 
-#define MEASURE_INTERVAL 5000
-#define GPSIDLE_INTERVAL 20000
+#define MEASURE_INTERVAL 60000        // measure every minute
+#define GPSIDLE_INTERVAL (60000 * 15) // get fix every 15 mins when not moving
+#define MOVE_THRESHOLD 60             // consider we have moved if distance to last fix is more than 60 meters
 
-// declare water temperarure sensor
+// declare water temperature sensor
 OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensors(&oneWire);
+RTCZero rtc;
+
+File logfile;
+String logfile_path;
+uint32_t cyclestart = 0;
+double lastLat = 0;
+double lastLng = 0;
+long gpsupdate_scheduled = 0;
+double temperature = 0;
 
 /**
  * rollover safe implementation, with an optional offset
@@ -180,6 +191,15 @@ bool find_gps_fix(uint32_t timeout = 60000) {
 
   if (sodaq_gps.scan(true, timeout)) { // keep GPS enabled afterwards
     DEBUG_OUT.println(String("time to find fix: ") + (millis() - start) + String("ms"));
+
+    // (re-)sync RTC
+    rtc.setSeconds(sodaq_gps.getSecond());
+    rtc.setMinutes(sodaq_gps.getMinute());
+    rtc.setHours(sodaq_gps.getHour());
+    rtc.setDay(sodaq_gps.getDay());
+    rtc.setMonth(sodaq_gps.getMonth());
+    rtc.setYear(sodaq_gps.getYear() - 2000);
+
     return true;
   } else {
     DEBUG_OUT.println("\tNo Fix after timeout");
@@ -193,15 +213,36 @@ void flash_led(uint8_t pin) {
   digitalWrite(pin, HIGH);
 }
 
+String int2String(int num, size_t width) {
+  String out;
+  out = num;
+  while (out.length() < width) {
+    out = String("0") + out;
+  }
+  return out;
+}
+
 String make_logfile_path() {
   // filenames longer than 12 chars cannot be written..??
   return sodaq_gps.getDateTimeString().substring(0, 8) + ".csv";
 }
 
 void write_log_to_stream(Print &stream) {
-  // GPS
-  stream.print(sodaq_gps.getDateTimeString());
+  // ISODate
+  stream.print(int2String(2000 + rtc.getYear(), 4));
+  stream.print('-');
+  stream.print(int2String(rtc.getMonth(), 2));
+  stream.print('-');
+  stream.print(int2String(rtc.getDay(), 2));
+  stream.print('T');
+  stream.print(int2String(rtc.getHours(), 2));
+  stream.print(':');
+  stream.print(int2String(rtc.getMinutes(), 2));
+  stream.print(':');
+  stream.print(int2String(rtc.getSeconds(), 2));
   stream.print(',');
+
+  // GPS
   stream.print(String(sodaq_gps.getLat(), 6));
   stream.print(',');
   stream.print(String(sodaq_gps.getLon(), 6));
@@ -214,18 +255,9 @@ void write_log_to_stream(Print &stream) {
   stream.print(',');
 
   // temperature
-  sensors.requestTemperatures();
-  stream.print(String(sensors.getTempCByIndex(0)));
-  stream.print(',');
+  stream.print(temperature);
   stream.println();
 }
-
-File logfile;
-String logfile_path;
-uint32_t cyclestart = 0;
-double lastLat = 0;
-double lastLng = 0;
-long gpsupdate_scheduled = 0;
 
 void setup() {
   // init RGB led, also as startup feedback
@@ -253,6 +285,8 @@ void setup() {
     digitalWrite(LED_BLUE, LOW);
     while (true) ;
   }
+
+  rtc.begin();
 
   // initialize water temperature sensor
   sensors.begin();
@@ -298,7 +332,7 @@ void loop(void) {
     }
 
     // determine, how far we moved. if less than 20m, reduce update interval
-    if (distanceBetween(lastLat, lastLng, sodaq_gps.getLat(), sodaq_gps.getLon()) > 20) {
+    if (distanceBetween(lastLat, lastLng, sodaq_gps.getLat(), sodaq_gps.getLon()) > MOVE_THRESHOLD) {
       gpsupdate_scheduled = cyclestart + MEASURE_INTERVAL;
     } else {
       gpsupdate_scheduled = cyclestart + GPSIDLE_INTERVAL;
@@ -310,6 +344,9 @@ void loop(void) {
     digitalWrite(LED_RED, HIGH);
   }
 
+  // measure temperature
+  sensors.requestTemperatures();
+  temperature = sensors.getTempCByIndex(0);
 
   write_log_to_stream(DEBUG_OUT);
 
